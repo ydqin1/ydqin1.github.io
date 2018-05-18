@@ -1,0 +1,273 @@
+---
+title: "Final Project CMSC320"
+author: "Yuchao Qin"
+date: "May 17, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(gapminder)
+library(tidyverse)
+library(tidyr)
+library(ggplot2)
+library(tree)
+library(lubridate)
+library(caret)
+library(ROCR)
+library(xlsx)
+library(tree)
+library(randomForest)
+```
+
+# Suicide Rates Around the World
+
+## 1. Introduction
+
+Suicide is a huge issue all around the world. I know my life has been affected by suicide and I'm sure many other people in this class have been too. Nearly 800,000 people die due to suicide each year around the world. That means someone is taking their own life every 40 seconds. This is not natural and we can use data science to try to shed some light on this epidemic. 
+
+This project will investigate if there is any relationship between suicide rates in a country and that country's GDP, how many cell phones there are in that country, and the percent of health expenditure that came out of pocket of citizens from that country. I think it is very possible for one or all of these factors to be related to suicide rates. First we will collect and combine the data and then parse it into a usable format. Next we will do some exploratory data analysis to visualize the data. Finally we will use machine learning techniques to test to see if there exists a reltionship between suicide rates, GDP, cellphone, and healthcare spenditure. 
+
+To learn more about suicide check out: http://www.who.int/mental_health/prevention/suicide/suicideprevent/en/
+
+If you would like to donate to a good cause consider:
+https://suicidepreventionlifeline.org/donate/
+
+## 2. Getting the Data
+
+First download the data files from https://www.gapminder.org/data/.
+
+The links to the specific data files are as follows:
+
+Total Number of Suicide:
+https://docs.google.com/spreadsheet/pub?key=tOS388dWYzO1_FANUaiwKuA&output=xlsx
+
+Total Gross Domestic Product:
+https://docs.google.com/spreadsheet/pub?key=pyj6tScZqmEfI4sLVvEQtHw&output=xlsx
+
+Number of Cellphones:
+https://docs.google.com/spreadsheet/pub?key=0AkBd6lyS3EmpdEhWLWtqNzljbWg4ZXV6M09JQXNGaUE&output=xlsx
+
+Out of Pocket Spending as Percent of Health Expenditure:
+https://docs.google.com/spreadsheet/pub?key=tXf6_OUYVmyEMZo0g4DQw6w&output=xlsx
+
+### 2.1 Data Curation
+
+Now that you have all the data files downloaded, change each of their types to a CSV file and lets read them using Rs *read_csv()* method and take a look.
+
+```{r datacuration, message=FALSE, warning=FALSE}
+suicide_data <- read_csv("indicator total suicides 20100913.csv")
+gdp_data <- read_csv("indicator GDP at market prices, constant 2000 US$ (WB estimates) .xls.csv")
+cell_data <- read_csv("cell phone total.csv")
+health_data <- read_csv("indicator_out-of-pocket expenditure as percentage of total health expenditure.csv")
+head(suicide_data)
+head(gdp_data)
+head(cell_data)
+head(health_data)
+```
+
+Take a look at the first 6 rows of each data set using the *head()* method. The **entities** of each data set are the objects to which the data is referring. They corresponde to the rows of the data set. In our case, the entities of each data set are individual countries. Each entity further contains a number of **attributes**. These attributes form the columns of the data. In our case, the attributes are the specific years in which the data is relevant. 
+
+### 2.2 Data Parsing
+
+Ultimately our goal will be to create 1 data set that contains all the information we need from these 4 separate data. We first however need to tidy up each data set individually into a more usable form. 
+
+We need to fix the attribute names for each data set. Attribute names should be variable names and not values.
+
+Let's start with the suicide data. Right now, the data has 3 attributes "Suicides, total deaths", "2002", and "2004". Right away, an issue is that the "Suicides, total deaths" column actually contains the country names so let's name this attribute "Country".
+
+```{r dataparsing}
+tidy_suicide_data <- rename(suicide_data, Country="Suicides, total deaths")
+head(tidy_suicide_data)
+```
+
+Now lets look at the next two attributes: "2002" and "2004". Here is an example of an attribute name being a value instead of a variable name. The names are telling you which year the data was from but what information is actually contained in these columns? The number of suicides during these years of course so lets call these columns "suicideCount". However just this is not enough. We still need to keep track of which year each value came from and if we remove that from the attribute name, how do we tell? The answer is to make a new attribute columns "Year" and incode the year there. This effectively doubles the number of entities since now each entity now describes a country during a specific year instead of just a country. To do this we will use the *gather()* method found in the tidyr package. This gather calls takes all the columns from suicide_data except Country and places them into key-value columns Year and suicideCount.
+
+```{r dataparsing2}
+tidy_suicide_data <- gather(tidy_suicide_data, Year, suicideCount, -Country) %>%
+  na.omit()
+tidy_suicide_data
+```
+
+We want to do the same tidy operations to the rest of the data.
+
+```{r dataparsing3}
+tidy_gdp_data <- gdp_data %>% 
+  rename(Country="GDP (constant 2000 US$)") %>%
+  select("Country", "2002", "2004") %>%
+  gather(Year, totalGDP, -Country) %>%
+  na.omit()
+tidy_cell_data <- cell_data %>% 
+  rename(Country="Mobile cellular subscriptions, total number") %>%
+  select("Country", "2002", "2004") %>%
+  gather(Year, cellPhones, -Country) %>%
+  na.omit()
+tidy_health_data <- health_data %>% 
+  rename(Country="Out-of-pocket expenditure as percentage of total health expenditure") %>%
+  select("Country", "2002", "2004") %>%
+  gather(Year, healthSpend, -Country) %>%
+  na.omit()
+```
+
+We repeated the exact same process for the other 3 data sets since they all had the same issues. This isn't too surprising since we got all the data from the same source. However, since we only have suicide data for 2002 and 2004, we selected just these years of data from each of the other data sets. To do this we used the *select()* method where we literally just listed our desired colums. Each of these data sets also contained some NA values for some of the countries in 2002 and 2004 so we removed those entities using *na.omit()*. 
+
+For more information about how to tidy up data you can refer to: https://cran.r-project.org/web/packages/tidyr/vignettes/tidy-data.html
+
+If you want even more information, that site provides a link to a full paper written called Tidy Data written by Hadley Wickham for The Journal of Statistical Software. 
+
+### 2.3 Joining Data
+
+Often the data you want will be found in different data files so you will need combine these data sets into one. There are several ways you can join two data sets which vary by how they handle missing data. A **left join** keeps all the entities of the left data set and looks for matching entities in the right data set, removing any entity found only in the right data set. A **right join** does the same thing but keeps all entities of the right data set instead. An **inner join** only keeps entities found in both data sets while a **full Join** just takes every entity from both data sets. In order to join two data sets  you have to provide one or more attributes to check for to determine if two entities are the same. In our case these attributes are Country and Year. We want to create one data set for these Country Year pairs that contains all the information we have gathered. 
+
+```{r joining}
+data <- inner_join(tidy_suicide_data, tidy_gdp_data, by=c("Country", "Year")) %>%
+        inner_join(tidy_cell_data, by=c("Country", "Year")) %>%
+        inner_join(tidy_health_data, by=c("Country", "Year"))
+data
+```
+
+## 3. Exploratory Data Analysis
+
+Now that we have our data all tidied up we can begin to visualize it. Let's start with something easy, we can make a density graph of one attribute, number of cellphones per country in 2004. We will use the **ggplot()** methods to create various graphs. 
+
+```{r eda}
+data %>% 
+  filter(Year == "2004") %>%
+  ggplot(aes(x=cellPhones)) + 
+    geom_density() +
+    ggtitle("Density of Number of Cellphones Across Countries in 2004")
+```
+
+From this unimodal graph we can see the vast majority of countries in 2004 have a relatively low number of cellphones but there are a couple severe outliers. Inorder to only plot the 2004 data points, we filtered the data by a Year contraint before plotting.  
+
+Now lets do a slightly more complicated example such as plotting a scatter plot of suicide rates vs out of pocket expenditure as a percentage of total health care expenditure.
+
+```{r eda2}
+data %>% 
+  ggplot(aes(x=totalGDP, y=suicideCount, color=Year, label=ifelse(Country=="United States", Country, NA))) + 
+    geom_text() +
+    geom_point() +
+    ylab("Number of Suicides") +
+    xlab("Total GDP (US$)") +
+    ggtitle("Suicide Count vs Total GDP")
+```
+
+This graph shows the relationship between Number of Suicides and Total GDP and right away it doesn't look like there is a stong relationship between the two. In this graph, you can see two different colors that represent different years. This was done by setting the *color* parameter inside ggplot. Another feature that you see is the label of the United States point. This was done by setting the *label* parameter in ggplot and adding *geom_text()*. We could have labeled every point but that would have made the graph very cluttered so I used an ifelse statement to only label the US. 
+
+Next, lets take a look at the plot of an attribute over time. Let's go with average number of cellphones per country each year over time. We first quickly restructure cell_data so we can group it by year and and find the average.
+
+```{r eda3}
+new_cell <- cell_data %>% 
+  rename(Country="Mobile cellular subscriptions, total number") %>%
+  gather(Year, cellPhones, -Country) %>%
+  na.omit()
+
+new_cell$Year <- as.numeric(as.character(new_cell$Year))
+new_cell$cellPhones <- as.numeric(as.character(new_cell$cellPhones))
+
+mean_cell <- new_cell %>% 
+              group_by(Year) %>%
+              summarize(ave_cell=mean(cellPhones))
+mean_cell
+```
+
+In order to obtain the mean of the number of cellphones, we used the *summarize()* method to find the mean after we grouped the data by year. One issue we ran into was that the cellPhones attribute was not a numeric attribute so the *mean* function wasn't returning the right value. To fix this we change the type of the entire attribute column.You can see this tranformed data. The entities are now years and they each have 1 attribute of the average number of cellphones in the world that year.
+
+```{r eda4}
+mean_cell %>%
+  ggplot(aes(x=Year, y=ave_cell)) +
+    geom_point() +
+    geom_smooth(method="loess") + 
+    ylab("Average CellPhones in the World") +
+    xlab("Year") +
+    ggtitle("Cellphones in the World")
+```
+
+
+Here you can see the plot. I added a regression line using method "loess" because it didn't look linear. It is a non-parametric methods where least squares regression is performed in localized subsets to find the regression line. For a more linear relationship, you would want to use *method=lm*. Does it make sense that this increase is exponential? Hint: think about Moore's Law
+
+Ggplot is a very powerful tool in R. If you want to learn more about all the cool things you can do with ggplot, look at:
+http://r-statistics.co/Top50-Ggplot2-Visualizations-MasterList-R-Code.html
+
+## 4. Hypothesis Testing and Machines Learning
+
+Machine learning is all about taking a bunch of data and finding patterns in order to predict attributes of other data. Although visually from the scatter plot of suicide count vs total country GDP, it did not look like there was a relationship we want to make a test to actually see.
+Specifically we will try to see if we can make a model to predict the number of suicide one year in a country based on the total GDP, number of cellphones in the country that year, and the percentage of healthcare expenditure that came out of pocket. 
+
+### 4.1 Null Hypothesis
+
+A popular way of testing hypothesis is to test the opposite of the actual hypothesis. In our case we can make a **null hypothesis** that there is no relationship between suicide rate and total GDP, number of cellphones, and percent of healthcare expenditure from pocket in a country. So later we will either reject the null hypothesis if we find a relationship or fail to reject the null hypothesis if there is indeed no relationship. I know this seems a little backwards but the pattern is the same for each problem so once you see it, you see it. If  you need more information, a much more detailed explanation of hypothesis testing can be found at: http://www.statisticshowto.com/probability-and-statistics/hypothesis-testing/.
+
+### 4.2 Regression Tree
+
+Trees are powerful models for classification. We will use the data we to create a **regression tree** that predicts suicide count based on our three attributes. At each level of the tree the model picks an attribute and a threshold and splits the data into two sets. A thing to remember is that regression trees create partitions in data recursively when making these sets. 
+
+```{r hypothesistesting}
+tree <- tree(suicideCount~totalGDP+cellPhones+healthSpend, data=data %>% select(-Country))
+plot(tree)
+text(tree)
+```
+
+Reading a tree is pretty linear. Take an entity and first look at its cellPhones attribute. If it is greater than 86,296,200 cell phones, then the model predicts there were 118,000 suicides. If it was less, the model then looks at the next attribute and threshold and repeats until it reaches a bottom. 
+
+### 4.3 Random Forest
+
+Just a simple tree usually isn't fantastic with predictions. Another very popular model is a **random forest**. To make a random forests, the training data gets resampled many times inorder to improve prediction performance and reduce instability by averaging multiple regression trees.
+
+```{r randomforest}
+set.seed(1234)
+test_data <- data %>%
+  sample_frac(.2) %>%
+  ungroup()
+
+train_data <- data %>%
+  anti_join(test_data, by="Country")
+
+randomF <- randomForest(suicideCount~totalGDP+cellPhones+healthSpend, data=data %>% select(-Country))
+randomF
+plot(randomF)
+```
+
+Here we made a random forest using 500 trees that each looked at one fifth of the total data. The mean of squared residuals is 31,201,295 whic is fairly large so our data model might not be very good. We will see during a Cross Validation Check. 
+
+### 4.4 Cross Validation
+
+In order to test model **generalization** performance, one can use a cross validation. One simple way to perform cross validation is to split your data up into 2 sets: a training set which you use to create the model and a validation set you use to analuze the model. We will break our model into 2002 data being the training set and 200 data being the validation set. 
+
+```{r randomforest1}
+set.seed(1234)
+
+in_validation <- sample(nrow(data), nrow(data)/2)
+valid_set <- data[in_validation,]
+train_set <- data[-in_validation,]
+
+tree <- tree(suicideCount~totalGDP+cellPhones+healthSpend, data=train_set %>% select(-Country))
+valid_set$predicted <- predict(tree, newdata=valid_set)
+valid_set$error <- valid_set$suicideCount - valid_set$predicted
+valid_set
+
+valid_setr <- data[in_validation,]
+train_setr <- data[-in_validation,]
+
+rt <- randomForest(suicideCount~totalGDP+cellPhones+healthSpend, data=train_setr %>% select(-Country))
+valid_setr$predicted <- predict(rt, newdata=valid_setr)
+valid_setr$error <- valid_setr$suicideCount - valid_setr$predicted
+
+a <- valid_set %>% summarize(mean(error^2))
+b <- valid_setr %>% summarize(mean(error^2))
+
+x <- factor(c("Regression Tree", "Random Forest"))
+y <- c(b, a)
+plot(x=x, y=y,type="b", xlab="Model Type", ylab="Mean Squared Error")
+text(x=x, y=y,labels=c("RF", "RT"))
+```
+
+After performing the Cross Validation we see that the mean squared error for the Random Forest model was much less than the least mean squared error for the Regression Tree. From this we can conclude that the random forest does better at generalizing the number of suicides which was expected. If you are curious as to why we are looking at squared error instead of absolute value of error, it is pretty much because squared error has better mathematical properties that can be used in equations. A detailed explanation can be found at: https://www.benkuhn.net/squared
+
+Even though the mean squared error for the Random Forest was much lower than for the Regression tree the error is still significant so this model too isn't very good.
+
+## 5. Conclusion
+
+Neither of our models did a very good job at prediciting the number of suicides in a country based on its GDP, number of cellphones, and the percentage of health care that came out of pocket. From this test we fail to reject the null hypothesis that there is no relationship. Often times in data science you will look for patterns where there are none, you just have to keep looking. I hope this tutorial proided you a nice quick introduction to using R. 
+
+Suicide is a problem that is only getting bigger. We all need to do our part in fixing the problem. That could mean just being a nicer person which we are all capapble of.
